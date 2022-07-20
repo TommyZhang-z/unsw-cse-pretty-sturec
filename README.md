@@ -16,3 +16,13 @@ for example:
 ```
 mv ./sturec ~/bin/
 ```
+
+# how to use
+```
+sturec [class_number]
+```
+for example
+```
+sturec 2521
+```
+![image](https://user-images.githubusercontent.com/81734746/179915247-28bc40d0-9381-4908-a57e-5d3cd7c54a37.png)
