@@ -18,6 +18,7 @@ mv ./sturec ~/bin/
 ```
 
 # how to use
+![image](https://user-images.githubusercontent.com/81734746/179916545-b1409a0c-c800-4d72-b83e-b4773ce5587b.png)
 ```
 sturec [class_number]
 ```
@@ -25,4 +26,5 @@ for example
 ```
 sturec 2521
 ```
-![image](https://user-images.githubusercontent.com/81734746/179915247-28bc40d0-9381-4908-a57e-5d3cd7c54a37.png)
+Made up Results
+![image](https://user-images.githubusercontent.com/81734746/179916452-276fad06-bafe-4e84-8f02-b3264cdd5be6.png)
