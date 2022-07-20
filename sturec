@@ -1,0 +1,120 @@
+#!/usr/bin/python3
+
+
+import argparse
+import re
+import subprocess
+import pkg_resources
+from pkg_resources import DistributionNotFound, VersionConflict
+import typing as t
+from rich import box
+from rich.align import Align
+from rich.color import Color
+from rich.console import Console
+from rich.markdown import Markdown
+from rich.style import Style
+from rich.table import Table
+
+dependencies = [
+  'rich>=12.4.4',
+]
+
+pkg_resources.require(dependencies)
+
+
+def run_command(cs_class_number: str) -> t.List[str]:
+    result = subprocess.Popen(
+                f"{cs_class_number} classrun -sturec",
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                shell=True
+            ).communicate()
+    return list(map(lambda x: x.decode("utf-8"), result))
+
+
+def re_parse(s: str) -> t.Dict[str, t.Union[str, t.Dict[str, str]]]:
+    data = {}
+    data['ClassKey'] = re.search(r"ClassKey: (\S+)", s).group(1)
+    data['StudentID'] = re.search(r"StudentID: (\S+)", s).group(1)
+    last_name, first_name = re.findall("Name: (\S+), (\S+)", s)[0]
+    data['Name'] = {"first_name": first_name, "last_name": last_name}
+    data['Program'] = re.search(r"Program: (\S+)", s).group(1)
+    data['Plans'] = re.search(r"Plans: (\S+)", s).group(1)
+    data['Login'] = re.search(r"Login: (\S+)", s).group(1)
+    data['tut_lab'] = re.search(r"tut_lab: (\S+)", s).group(1)
+    return data
+
+
+def helper(s: str) -> t.Union[float, None]:
+    return None if s in ".?" else float(s)
+    
+
+if __name__ == "__main__":    
+    console = Console(width=50)
+    
+    parser = argparse.ArgumentParser()
+    parser.add_argument("classname")
+    args = parser.parse_args()
+    
+    # status loading animation
+    with console.status("[bold green]Loading...") as status:
+        stdout, stderr = run_command(args.classname)
+        if (stderr):
+            exit(1)
+
+        data = re_parse(stdout)
+        lines = re.split(r"\n", stdout)
+        
+        first_name, last_name = data['Name'].values()
+        
+        table = Table(width=50, box=box.DOUBLE)
+        
+        test_style = Style(color=Color.from_rgb(58, 170, 197))
+        table.add_column("Test", justify="left", style=test_style, no_wrap=True, min_width=20)
+        table.add_column("Mark", justify="left")
+        table.add_column("Status", justify="left", style="white")
+        
+        # ignore first line
+        for line in lines[1:]:
+            
+            # ignore empty lines
+            if not line:
+                continue
+            
+            result = re.split(r":\s", line.rstrip())
+            
+            # ignore lines with useless data
+            if (len(result) != 2):
+                continue
+            
+            test_name, score_prompt = result
+            if re.search("\d+$", score_prompt) and test_name not in data.keys():
+                score, total = list(map(helper ,re.split(r"/", score_prompt)))
+                
+                # must use score is None since "not score" also pass when score == 0
+                if score is None:
+                    table.add_row(test_name, score_prompt, "TBA")
+                elif score == total:
+                    table.add_row(test_name, score_prompt, "🔥")
+                else:
+                    table.add_row(test_name, score_prompt, "[green]:heavy_check_mark:[/green]")
+                
+    MARKDOWN = f"""
+# Student Record
+-  **Name**    :  {first_name} {last_name}
+-  **zID**     :  {data.get("Login", "?")}
+-  **Course**  :  {data.get("ClassKey", "?")}
+-  **Tut/Lab** :  {data.get("tut_lab", "?")}
+-  **Program** :  {data.get("Program", "?")}
+-  **Plans**   :  {data.get("Plans", "?")}
+"""
+    md = Markdown(MARKDOWN)
+    
+    # displaying results
+    console.print(md)
+    console.print("")
+    console.print(table)
+    
+    # export_filename = "result"
+    # if args.svg:
+    #     console.save_svg(f"{export_filename}.svg", theme=SVG_EXPORT_THEME)
