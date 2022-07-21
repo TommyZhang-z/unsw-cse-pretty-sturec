@@ -9,6 +9,7 @@ pip3 install rich
 # installation
 ```
 git clone https://github.com/TommyZhang-z/unsw-cse-pretty-sturec.git
+cd unsw-cse-pretty-sturec
 chmod 755 ./sturec
 ```
 and then move sturec to your system path folder
