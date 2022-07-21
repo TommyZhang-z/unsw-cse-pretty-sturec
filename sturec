@@ -16,10 +16,13 @@ from rich.table import Table
 # Constants
 WIDTH = 65
 
+# TODO: Move check dependencies into another file
+# TODO: Check if script dir is in path
+
+# Check dependencies
 dependencies = [
     'rich>=12.4.4',
 ]
-
 pkg_resources.require(dependencies)
 
 # Type aliases
@@ -37,6 +40,20 @@ class t_class_info(t.TypedDict):
     term: int
     role: str
     expiry: str
+
+
+class t_result_data(t.TypedDict):
+    ClassKey: str
+    StudentID: str
+    Name: dict[str, str]
+    Program: str
+    Plans: str
+    Login: str
+    tut_lab: str
+
+
+class LoadMarkError(Exception):
+    pass
 
 
 def run_shell_command(command: str) -> t.Tuple[t_stdout, t_stderr]:
@@ -58,12 +75,11 @@ def get_default_class() -> str:
     if stderr:
         exit(1)
     classes = stdout.strip().split(",")
-
     # Stores the alpha (e.g. COMP) and the code (e.g. 2521) as tuples.
     courses: t.List[t_class_info] = []
 
     for c in classes:
-        parsed = parse_class(c)
+        parsed = re_parse_class(c)
         if parsed:
             if parsed["course_alpha"].lower() != "comp":
                 print(f"Class {parsed['course_alpha']} is not supported.")
@@ -105,42 +121,7 @@ def get_default_class() -> str:
     return courses[selection]["course_code"]
 
 
-def read_iter(iter: t.Iterator, length: int = 0, until: str = None,
-              predicate: t_read_predicate = lambda a, b: a == b,
-              discard_until_element: bool = False, enforce_length=False) -> t.List[t.Any]:
-    '''
-    Attempts to read the given iterator for max length of n, until 
-    StopIteration is raised or the the desired object is found. If n is zero, 
-    there will be no limit on the length of the read.
-
-    Returns List[val]. StopIteration will not be treated as an exception, 
-    unless specified using the enforce_length param.
-    '''
-    acc = []
-    length_read = 0
-
-    while length_read < length or length == 0:
-        try:
-            val = next(iter)
-            acc.append(val)
-            if until and predicate(val, until):
-                if discard_until_element:
-                    acc.pop()
-                return acc, None
-        except StopIteration:
-            return acc, None
-        except BaseException as e:
-            return acc, e
-        length_read += 1
-    return acc, None
-
-
-def check_error(err: t_error) -> None:
-    if err:
-        raise err
-
-
-def parse_class(c: str) -> t.Union[t_class_info, None]:
+def re_parse_class(c: str) -> t.Union[t_class_info, None]:
     '''
     Parses the class record in the format:
     <class(4, alpha)><class_code(4, int)>t<term(1, int)>_<role(?, char)>[expiry(8, str)]
@@ -151,49 +132,33 @@ def parse_class(c: str) -> t.Union[t_class_info, None]:
     Returns a dictionary containing the parsed data, or None if the class is
     not in the format above.
     '''
-
-    try:
-        it = iter(c)
-        course_alpha, err = read_iter(it, length=4, enforce_length=True)
-        check_error(err)
-        course_alpha = ''.join(course_alpha)
-        course_code, err = read_iter(it, length=4, enforce_length=True)
-        check_error(err)
-        course_code = int(''.join(course_code))
-        _, err = read_iter(it, length=1, enforce_length=True)
-        term, err = read_iter(it, length=1, enforce_length=True)
-        check_error(err)
-        term = int(term[0])
-        check_error(err)
-        _, err = read_iter(it, length=1, enforce_length=True)
-        role, err = read_iter(it, until="[", discard_until_element=True)
-        check_error(err)
-        role = ''.join(role)
-        expiry, err = read_iter(it, length=8, enforce_length=True)
-        check_error(err)
-        expiry = ''.join(expiry)
+    pattern = re.compile(r'([A-Z]{4})([0-9]{4})t([0-9])_(.+?)\[([0-9]+)\]')
+    m1 = pattern.match(c)
+    if m1:
+        course_alpha, course_code, term, role, expiry = m1.groups()
         return {
-            "course_alpha": course_alpha,
-            "course_code": course_code,
-            "term": term,
-            "role": role,
-            "expiry": expiry
-        }
-    except Exception:
+                    "course_alpha": course_alpha,
+                    "course_code": course_code,
+                    "term": term,
+                    "role": role,
+                    "expiry": expiry
+                }
+    return None
+
+def re_parse_result(s: str) -> t.Union[t_result_data, None]:
+    try: 
+        data = {}
+        data['ClassKey'] = re.search(r"ClassKey: (\S+)", s).group(1)
+        data['StudentID'] = re.search(r"StudentID: (\S+)", s).group(1)
+        last_name, first_name = re.findall("Name: (\S+), (\S+)", s)[0]
+        data['Name'] = {"first_name": first_name, "last_name": last_name}
+        data['Program'] = re.search(r"Program: (\S+)", s).group(1)
+        data['Plans'] = re.search(r"Plans: (\S+)", s).group(1)
+        data['Login'] = re.search(r"Login: (\S+)", s).group(1)
+        data['tut_lab'] = re.search(r"tut_lab: (\S+)", s).group(1)
+        return data
+    except AttributeError:
         return None
-
-
-def re_parse(s: str) -> t.Dict[str, t.Union[str, t.Dict[str, str]]]:
-    data = {}
-    data['ClassKey'] = re.search(r"ClassKey: (\S+)", s).group(1)
-    data['StudentID'] = re.search(r"StudentID: (\S+)", s).group(1)
-    last_name, first_name = re.findall("Name: (\S+), (\S+)", s)[0]
-    data['Name'] = {"first_name": first_name, "last_name": last_name}
-    data['Program'] = re.search(r"Program: (\S+)", s).group(1)
-    data['Plans'] = re.search(r"Plans: (\S+)", s).group(1)
-    data['Login'] = re.search(r"Login: (\S+)", s).group(1)
-    data['tut_lab'] = re.search(r"tut_lab: (\S+)", s).group(1)
-    return data
 
 
 def helper(s: str) -> t.Union[float, None]:
@@ -212,13 +177,18 @@ if __name__ == "__main__":
 
     # status loading animation
     with console.status("[bold green]Loading...") as status:
-        stdout, stderr = run_command(classname)
-        if (stderr):
+        try:
+            stdout, stderr = run_command(classname)
+            if stderr:
+                raise LoadMarkError
+            data = re_parse_result(stdout)
+            if not data:
+                raise LoadMarkError
+        except LoadMarkError:
             console.print(
                 f"[red]Could not load the marks for class {classname}.[/red]")
             exit(1)
 
-        data = re_parse(stdout)
         lines = re.split(r"\n", stdout)
 
         first_name, last_name = data['Name'].values()
@@ -241,7 +211,7 @@ if __name__ == "__main__":
             result = re.split(r":\s", line.rstrip())
 
             # ignore lines with useless data
-            if (len(result) != 2):
+            if len(result) != 2:
                 continue
 
             test_name, score_prompt = result
