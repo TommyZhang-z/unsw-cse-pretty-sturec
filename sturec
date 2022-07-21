@@ -1,10 +1,8 @@
 #!/usr/bin/python3
 
 
-import argparse
 import re
 import subprocess
-import pkg_resources
 import typing as t
 from rich import box
 from rich.color import Color
@@ -15,26 +13,10 @@ from rich.table import Table
 
 # Constants
 WIDTH = 65
-
-# TODO: Move check dependencies into another file
-# TODO: Check if script dir is in path
-
-# Check dependencies
-dependencies = [
-    'rich>=12.4.4',
-]
-pkg_resources.require(dependencies)
-
-# Type aliases
-t_stderr = t.AnyStr
-t_stdout = t.AnyStr
-t_error = t.Union[BaseException, None]
-
-# Predicate type alias
-t_read_predicate = t.Callable[[t.Any, t.Any], bool]
+BOX = box.DOUBLE
 
 
-class t_class_info(t.TypedDict):
+class ClassInfoType(t.TypedDict):
     course_alpha: str
     course_code: int
     term: int
@@ -42,7 +24,7 @@ class t_class_info(t.TypedDict):
     expiry: str
 
 
-class t_result_data(t.TypedDict):
+class ResultDataType(t.TypedDict):
     ClassKey: str
     StudentID: str
     Name: dict[str, str]
@@ -52,155 +34,161 @@ class t_result_data(t.TypedDict):
     tut_lab: str
 
 
-class LoadMarkError(Exception):
-    pass
+class StudentRecord:
+    stdout: t.Union[str, None] = None
+    stderr: t.Union[str, None] = None
+    info: t.Union[ResultDataType, None] = None
 
+    def __init__(self, course_code: int = None, width: int = WIDTH, box_style=BOX) -> None:
+        self.course_code: int = course_code
+        self.width = width
+        self.pattern = None
+        self.box_style = box_style
+        self.console = Console(width=width)
 
-def run_shell_command(command: str) -> t.Tuple[t_stdout, t_stderr]:
-    result = subprocess.Popen(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        shell=True
-    ).communicate()
-    return list(map(lambda x: x.decode("utf-8"), result))
+    def run(self) -> None:
+        if self.course_code is None:
+            self.get_default_class()
 
+        with self.console.status("[bold green]Loading...[/bold green]"):
+            self.run_sturec()
+            self.check_error()
 
-def run_command(cs_class_number: str) -> t.Tuple[t_stdout, t_stderr]:
-    return run_shell_command(f"{cs_class_number} classrun -sturec")
+            self.info = self.re_parse_result()
+            if not self.info:
+                exit(1)
 
+            lines = re.split(r"\n", self.stdout)
+            test_style = Style(color=Color.from_rgb(58, 170, 197))
+            table = Table(width=WIDTH, box=self.box_style)
+            table.add_column("Test", justify="left", style=test_style, no_wrap=True, min_width=20)
+            table.add_column("Mark", justify="left")
+            table.add_column("Status", justify="left", style="white")
+            self.add_rows(table, lines)
 
-def get_default_class() -> str:
-    stdout, stderr = run_shell_command("acc format=\'$CLASSES\'")
-    if stderr:
-        exit(1)
-    classes = stdout.strip().split(",")
-    # Stores the alpha (e.g. COMP) and the code (e.g. 2521) as tuples.
-    courses: t.List[t_class_info] = []
+        first_name, last_name = self.info['Name'].values()
+        markdown = "# Student Record\n"
+        markdown += f'-  **Name**    :  {first_name} {last_name}\n'
+        markdown += f'-  **zID**     :  {self.info.get("Login", "?")}\n'
+        markdown += f'-  **Course**  :  {self.info.get("ClassKey", "?")}\n'
+        markdown += f'-  **Tut/Lab** :  {self.info.get("tut_lab", "?")}\n'
+        markdown += f'-  **Program** :  {self.info.get("Program", "?")}\n'
+        markdown += f'-  **Plans**   :  {self.info.get("Plans", "?")}\n'
+        self.console.print(Markdown(markdown))
+        self.console.print("")
+        self.console.print(table)
 
-    for c in classes:
-        parsed = re_parse_class(c)
-        if parsed:
-            if parsed["course_alpha"].lower() != "comp":
-                print(f"Class {parsed['course_alpha']} is not supported.")
-                continue
-            courses.append(parsed)
-
-    if len(courses) == 0:
-        print("Could not find any supported classes.")
-        exit(1)
-
-    if len(courses) == 1:
-        return courses[0]["course_code"]
-
-    # Prints a table of the courses and their codes.
-    table = Table(width=WIDTH, box=box.DOUBLE)
-    table.add_column("Selection", style=Style(bold=True))
-    table.add_column("Course")
-    table.add_column("Code")
-    table.add_column("Term")
-    table.add_column("Role")
-    table.add_column("Expiry")
-    for i, course in enumerate(courses):
-        table.add_row(str(i), course["course_alpha"], str(course["course_code"]),
-                      f'Term {course["term"]}', course["role"], str(course["expiry"]))
-    console.print(table)
-    console.print(
-        f"[green] You're enrolled in multiple classes. Please select one [{0}-{len(courses)-1}]: [/green]", end='')
-    selection = input("")
-    try:
-        selection = int(selection)
-    except ValueError:
-        console.print("[red] Invalid selection. [/red]")
-        exit(1)
-
-    if selection < 0 or selection >= len(courses):
-        console.print("[red] Invalid selection. [/red]")
-        exit(1)
-
-    return courses[selection]["course_code"]
-
-
-def re_parse_class(c: str) -> t.Union[t_class_info, None]:
-    '''
-    Parses the class record in the format:
-    <class(4, alpha)><class_code(4, int)>t<term(1, int)>_<role(?, char)>[expiry(8, str)]
-
-    Example:
-    COMP2521t2_Student[20220926]
-
-    Returns a dictionary containing the parsed data, or None if the class is
-    not in the format above.
-    '''
-    pattern = re.compile(r'([A-Z]{4})([0-9]{4})t([0-9])_(.+?)\[([0-9]+)\]')
-    m1 = pattern.match(c)
-    if m1:
-        course_alpha, course_code, term, role, expiry = m1.groups()
-        return {
-                    "course_alpha": course_alpha,
-                    "course_code": course_code,
-                    "term": term,
-                    "role": role,
-                    "expiry": expiry
-                }
-    return None
-
-def re_parse_result(s: str) -> t.Union[t_result_data, None]:
-    try: 
-        data = {}
-        data['ClassKey'] = re.search(r"ClassKey: (\S+)", s).group(1)
-        data['StudentID'] = re.search(r"StudentID: (\S+)", s).group(1)
-        last_name, first_name = re.findall("Name: (\S+), (\S+)", s)[0]
-        data['Name'] = {"first_name": first_name, "last_name": last_name}
-        data['Program'] = re.search(r"Program: (\S+)", s).group(1)
-        data['Plans'] = re.search(r"Plans: (\S+)", s).group(1)
-        data['Login'] = re.search(r"Login: (\S+)", s).group(1)
-        data['tut_lab'] = re.search(r"tut_lab: (\S+)", s).group(1)
-        return data
-    except AttributeError:
-        return None
-
-
-def helper(s: str) -> t.Union[float, None]:
-    return None if s in ".?" else float(s)
-
-
-if __name__ == "__main__":
-    console = Console(width=WIDTH)
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("classname", nargs="?")
-    args = parser.parse_args()
-    classname = args.classname
-    if not classname:
-        classname = get_default_class()
-
-    # status loading animation
-    with console.status("[bold green]Loading...") as status:
-        try:
-            stdout, stderr = run_command(classname)
-            if stderr:
-                raise LoadMarkError
-            data = re_parse_result(stdout)
-            if not data:
-                raise LoadMarkError
-        except LoadMarkError:
-            console.print(
-                f"[red]Could not load the marks for class {classname}.[/red]")
+    def check_error(self) -> None:
+        if self.stderr:
             exit(1)
 
-        lines = re.split(r"\n", stdout)
+    def run_shell_command(self, command: str) -> None:
+        result = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            shell=True
+        ).communicate()
+        self.stdout, self.stderr = list(map(lambda x: x.decode("utf-8"), result))
 
-        first_name, last_name = data['Name'].values()
+    def run_sturec(self) -> None:
+        self.run_shell_command(f"{self.course_code} classrun -sturec")
 
-        table = Table(width=WIDTH, box=box.DOUBLE)
+    def get_default_class(self) -> None:
+        self.run_shell_command("acc format=\'$CLASSES\'")
+        self.check_error()
+        self.pattern = re.compile(r'([A-Z]{4})(\d{4})t(\d)_(.+?)\[(\d+)]')
+        classes = self.stdout.strip().split(",")
+        courses: t.List[ClassInfoType] = []
 
-        test_style = Style(color=Color.from_rgb(58, 170, 197))
-        table.add_column("Test", justify="left",
-                         style=test_style, no_wrap=True, min_width=20)
-        table.add_column("Mark", justify="left")
-        table.add_column("Status", justify="left", style="white")
+        for c in classes:
+            parsed = self.re_parse_class(c)
+            if parsed:
+                if parsed["course_alpha"].lower() != "comp":
+                    self.console.print(f"Class {parsed['course_alpha']} is not supported.")
+                    continue
+                courses.append(parsed)
 
+        if len(courses) == 0:
+            self.console.print("Could not find any supported classes.")
+            exit(1)
+
+        if len(courses) == 1:
+            self.course_code = courses[0]["course_code"]
+
+        # Prints a table of the courses and their codes.
+        self.print_courses_table(courses)
+        selection = self.console.input(
+            f"[green] You're enrolled in multiple classes. Please select one [{0}-{len(courses) - 1}]: [/green]")
+        try:
+            selection = int(selection)
+        except ValueError:
+            self.console.print("[red] Invalid selection. [/red]")
+            exit(1)
+
+        if selection < 0 or selection >= len(courses):
+            self.console.print("[red] Invalid selection. [/red]")
+            exit(1)
+
+        self.course_code = courses[selection]["course_code"]
+
+    def print_courses_table(self, courses: t.List[ClassInfoType]) -> None:
+        table = Table(width=self.width, box=self.box_style)
+        table.add_column("Selection", style="bold")
+        table.add_column("Course")
+        table.add_column("Code")
+        table.add_column("Term")
+        table.add_column("Role")
+        table.add_column("Expiry")
+        for i, course in enumerate(courses):
+            table.add_row(
+                str(i),
+                course["course_alpha"],
+                str(course["course_code"]),
+                f'Term {course["term"]}',
+                course["role"],
+                str(course["expiry"])
+            )
+        self.console.print(table)
+
+    def re_parse_class(self, c: str) -> t.Union[ClassInfoType, None]:
+        """
+        Parses the class record in the format:
+        <class(4, alpha)><class_code(4, int)>t<term(1, int)>_<role(?, char)>[expiry(8, str)]
+
+        Example:
+        COMP2521t2_Student[20220926]
+
+        Returns a dictionary containing the parsed data, or None if the class is
+        not in the format above.
+        """
+        match_obj = self.pattern.match(c)
+        if match_obj:
+            course_alpha, course_code, term, role, expiry = match_obj.groups()
+            return {
+                "course_alpha": course_alpha,
+                "course_code": course_code,
+                "term": term,
+                "role": role,
+                "expiry": expiry
+            }
+        return None
+
+    def re_parse_result(self) -> t.Union[ResultDataType, None]:
+        try:
+            data = {'ClassKey': re.search(r"ClassKey: (\S+)", self.stdout).group(1),
+                    'StudentID': re.search(r"StudentID: (\S+)", self.stdout).group(1),
+                    'Program': re.search(r"Program: (\S+)", self.stdout).group(1),
+                    'Plans': re.search(r"Plans: (\S+)", self.stdout).group(1),
+                    'Login': re.search(r"Login: (\S+)", self.stdout).group(1),
+                    'tut_lab': re.search(r"tut_lab: (\S+)", self.stdout).group(1)}
+            last_name, first_name = re.findall(r"Name: (\S+), (\S+)", self.stdout)[0]
+            data['Name'] = {"first_name": first_name, "last_name": last_name}
+            return data
+        except AttributeError:
+            return None
+
+    def add_rows(self, table: Table, lines: t.List[str]) -> None:
         # ignore first line
         for line in lines[1:]:
 
@@ -215,10 +203,10 @@ if __name__ == "__main__":
                 continue
 
             test_name, score_prompt = result
-            if re.search("\d+$", score_prompt) and test_name not in data.keys():
-                score, total = list(map(helper, re.split(r"/", score_prompt)))
+            if re.search(r"\d+$", score_prompt) and test_name not in self.info.keys():
+                score, total = list(map(lambda s: None if s in ".?" else float(s), re.split(r"/", score_prompt)))
 
-                # must use score is None since "not score" also pass when score == 0
+                # must use "score is None" since "not score" also pass when score == 0
                 if score is None:
                     table.add_row(test_name, score_prompt, "TBA")
                 elif score == total:
@@ -227,18 +215,17 @@ if __name__ == "__main__":
                     table.add_row(test_name, score_prompt,
                                   "[green]:heavy_check_mark:[/green]")
 
-    MARKDOWN = f"""
-# Student Record
--  **Name**    :  {first_name} {last_name}
--  **zID**     :  {data.get("Login", "?")}
--  **Course**  :  {data.get("ClassKey", "?")}
--  **Tut/Lab** :  {data.get("tut_lab", "?")}
--  **Program** :  {data.get("Program", "?")}
--  **Plans**   :  {data.get("Plans", "?")}
-"""
-    md = Markdown(MARKDOWN)
 
-    # displaying results
-    console.print(md)
-    console.print("")
-    console.print(table)
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('course_code', nargs="?")
+    args = parser.parse_args()
+
+    if args.course_code:
+        sturec = StudentRecord(args.course_code)
+    else:
+        sturec = StudentRecord()
+
+    sturec.run()
