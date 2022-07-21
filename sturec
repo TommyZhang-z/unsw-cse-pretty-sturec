@@ -118,6 +118,8 @@ class StudentRecord:
 
         if len(courses) == 1:
             self.course_code = courses[0]["course_code"]
+            # The user is on only enrolled in one course - just use that course code.
+            return
 
         # Prints a table of the courses and their codes.
         self.print_courses_table(courses)
