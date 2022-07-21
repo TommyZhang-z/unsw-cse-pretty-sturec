@@ -211,6 +211,13 @@ class StudentRecord:
                 score, total = list(
                     map(lambda s: None if s in ".?" else float(s), re.split(r"/", score_prompt)))
 
+                if test_name.endswith('_latepen'):
+                    # Invert the marks for the late penalty, as a 0/? is the ideal mark.
+                    # * Note that this does not affect the actual display of the mark - that's
+                    # * controlled by the `score_prompt`.
+                    if score is not None and total is not None:
+                        score = total - score
+
                 # must use "score is None" since "not score" also pass when score == 0
                 if score is None:
                     table.add_row(test_name, score_prompt, "TBA")
