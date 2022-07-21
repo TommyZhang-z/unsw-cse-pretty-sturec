@@ -56,6 +56,8 @@ class StudentRecord:
 
             self.info = self.re_parse_result()
             if not self.info:
+                self.console.print(
+                    f"[red] Could not load the required course: {self.course_code}. [/red]")
                 exit(1)
 
             lines = re.split(r"\n", self.stdout)
@@ -81,6 +83,8 @@ class StudentRecord:
 
     def check_error(self) -> None:
         if self.stderr:
+            self.console.print(
+                f"[red] Could not load the required course: {self.course_code}. [/red]")
             exit(1)
 
     def run_shell_command(self, command: str) -> None:
