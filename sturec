@@ -56,12 +56,15 @@ class StudentRecord:
 
             self.info = self.re_parse_result()
             if not self.info:
+                self.console.print(
+                    f"[red] Could not load the required course: {self.course_code}. [/red]")
                 exit(1)
 
             lines = re.split(r"\n", self.stdout)
             test_style = Style(color=Color.from_rgb(58, 170, 197))
             table = Table(width=WIDTH, box=self.box_style)
-            table.add_column("Test", justify="left", style=test_style, no_wrap=True, min_width=20)
+            table.add_column("Test", justify="left",
+                             style=test_style, no_wrap=True, min_width=20)
             table.add_column("Mark", justify="left")
             table.add_column("Status", justify="left", style="white")
             self.add_rows(table, lines)
@@ -80,6 +83,8 @@ class StudentRecord:
 
     def check_error(self) -> None:
         if self.stderr:
+            self.console.print(
+                f"[red] Could not load the required course: {self.course_code}. [/red]")
             exit(1)
 
     def run_shell_command(self, command: str) -> None:
@@ -89,7 +94,8 @@ class StudentRecord:
             stderr=subprocess.PIPE,
             shell=True
         ).communicate()
-        self.stdout, self.stderr = list(map(lambda x: x.decode("utf-8"), result))
+        self.stdout, self.stderr = list(
+            map(lambda x: x.decode("utf-8"), result))
 
     def run_sturec(self) -> None:
         self.run_shell_command(f"{self.course_code} classrun -sturec")
@@ -105,7 +111,8 @@ class StudentRecord:
             parsed = self.re_parse_class(c)
             if parsed:
                 if parsed["course_alpha"].lower() != "comp":
-                    self.console.print(f"Class {parsed['course_alpha']} is not supported.")
+                    self.console.print(
+                        f"Class {parsed['course_alpha']} is not supported.")
                     continue
                 courses.append(parsed)
 
@@ -115,6 +122,8 @@ class StudentRecord:
 
         if len(courses) == 1:
             self.course_code = courses[0]["course_code"]
+            # The user is on only enrolled in one course - just use that course code.
+            return
 
         # Prints a table of the courses and their codes.
         self.print_courses_table(courses)
@@ -182,7 +191,8 @@ class StudentRecord:
                     'Plans': re.search(r"Plans: (\S+)", self.stdout).group(1),
                     'Login': re.search(r"Login: (\S+)", self.stdout).group(1),
                     'tut_lab': re.search(r"tut_lab: (\S+)", self.stdout).group(1)}
-            last_name, first_name = re.findall(r"Name: (\S+), (\S+)", self.stdout)[0]
+            last_name, first_name = re.findall(
+                r"Name: (\S+), (\S+)", self.stdout)[0]
             data['Name'] = {"first_name": first_name, "last_name": last_name}
             return data
         except AttributeError:
@@ -204,7 +214,15 @@ class StudentRecord:
 
             test_name, score_prompt = result
             if re.search(r"\d+$", score_prompt) and test_name not in self.info.keys():
-                score, total = list(map(lambda s: None if s in ".?" else float(s), re.split(r"/", score_prompt)))
+                score, total = list(
+                    map(lambda s: None if s in ".?" else float(s), re.split(r"/", score_prompt)))
+
+                if test_name.endswith('_latepen'):
+                    # Invert the marks for the late penalty, as a 0/? is the ideal mark.
+                    # * Note that this does not affect the actual display of the mark - that's
+                    # * controlled by the `score_prompt`.
+                    if score is not None and total is not None:
+                        score = total - score
 
                 # must use "score is None" since "not score" also pass when score == 0
                 if score is None:
